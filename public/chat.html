@@ -1,0 +1,375 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>TAC Agent</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px;
+      color: #111;
+    }
+
+    h1 {
+      font-size: 42px;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      color: #555;
+      margin-bottom: 28px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      padding: 16px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      box-sizing: border-box;
+    }
+
+    button {
+      padding: 13px 22px;
+      margin-top: 14px;
+      margin-right: 10px;
+      border-radius: 8px;
+      border: 1px solid #111;
+      cursor: pointer;
+      font-size: 15px;
+    }
+
+    .primary {
+      background: #111;
+      color: white;
+    }
+
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 18px;
+      margin-top: 20px;
+      background: #fafafa;
+    }
+
+    .score {
+      font-size: 40px;
+      font-weight: bold;
+      margin-top: 8px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 14px;
+      background: white;
+    }
+
+    .label {
+      color: #666;
+      font-size: 13px;
+      margin-bottom: 5px;
+    }
+
+    .value {
+      font-size: 22px;
+      font-weight: bold;
+    }
+
+    .valid {
+      color: green;
+      font-weight: bold;
+    }
+
+    .invalid {
+      color: #b00020;
+      font-weight: bold;
+    }
+
+    .warning {
+      background: #fff7e6;
+      border-color: #f0c36d;
+    }
+
+    .danger {
+      background: #fff1f1;
+      border-color: #e0a0a0;
+    }
+
+    .small {
+      font-size: 14px;
+      color: #555;
+    }
+
+    pre {
+      background: #f5f5f5;
+      padding: 14px;
+      border-radius: 10px;
+      white-space: pre-wrap;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>TAC Agent</h1>
+  <div class="subtitle">
+    Local runtime using your own LLM configuration.
+  </div>
+
+  <textarea
+    id="input"
+    placeholder="Example: Should I launch TAC-3D this quarter given limited funding and incomplete onboarding?"
+  ></textarea>
+
+  <br />
+
+  <button class="primary" onclick="analyze()">Analyze Decision</button>
+  <button onclick="resetAll()">Reset</button>
+
+  <div id="status" class="small" style="margin-top: 14px;"></div>
+
+  <div id="result"></div>
+
+  <script>
+    let decisionState = {}
+
+    function resetAll() {
+      document.getElementById("input").value = ""
+      document.getElementById("result").innerHTML = ""
+      document.getElementById("status").textContent = ""
+      decisionState = {}
+    }
+
+    function scoreLabel(value) {
+      if (value >= 8) return "Strong"
+      if (value >= 5) return "Moderate"
+      if (value >= 3) return "Limited"
+      return "Low"
+    }
+
+    function escapeHtml(text) {
+      return String(text || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;")
+    }
+
+    async function analyze(extraInput) {
+      const input =
+        extraInput ||
+        document.getElementById("input").value.trim()
+
+      if (!input) {
+        alert("Enter a decision first.")
+        return
+      }
+
+      document.getElementById("status").textContent =
+        "Evaluating decision structure..."
+
+      try {
+        const res = await fetch("/analyze", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            input,
+            decision_state: decisionState
+          })
+        })
+
+        const data = await res.json()
+
+        if (!res.ok) {
+          throw new Error(data.error || "Analysis failed")
+        }
+
+        decisionState = data.decision_state || {}
+
+        renderResult(data)
+
+        document.getElementById("status").textContent = ""
+      } catch (e) {
+        document.getElementById("status").textContent = ""
+        document.getElementById("result").innerHTML =
+          `<div class="card danger">Analysis failed. Check terminal logs.</div>`
+      }
+    }
+
+    function renderResult(data) {
+      const result = document.getElementById("result")
+
+      const readiness = data.readiness_score ?? 0
+
+      let html = ""
+
+      html += `
+        <div class="card">
+          <div class="label">Readiness Score</div>
+          <div class="score">${readiness}%</div>
+          <div class="small">
+            ${
+              readiness >= 85
+                ? "Ready to move forward"
+                : readiness >= 60
+                ? "Almost ready — one or two elements to confirm"
+                : "Key structural elements still missing"
+            }
+          </div>
+        </div>
+      `
+
+      if (data.segments && data.segments.length) {
+        html += `
+          <div class="card">
+            <h3>Parsed Decision Structure</h3>
+            <ul>
+              ${data.segments.map(s => `<li>${escapeHtml(s)}</li>`).join("")}
+            </ul>
+          </div>
+        `
+      }
+
+      if (data.decision_state) {
+        html += `
+          <div class="card">
+            <h3>Decision State</h3>
+            <p><b>Intent:</b> ${escapeHtml(data.decision_state.intent)}</p>
+            <p><b>Resources:</b> ${escapeHtml(data.decision_state.resources)}</p>
+            <p><b>Risk Boundary:</b> ${escapeHtml(data.decision_state.risk_boundary)}</p>
+            <p><b>Execution Horizon:</b> ${escapeHtml(data.decision_state.execution_horizon)}</p>
+          </div>
+        `
+      }
+
+      if (data.validation) {
+        html += `
+          <div class="card">
+            <h3>TAC Layer Validation</h3>
+            ${["intent", "resources", "risk_boundary", "execution_horizon"].map(layer => {
+              const v = data.validation[layer]
+              return `
+                <p>
+                  <b>${layer}:</b>
+                  <span class="${v.valid ? "valid" : "invalid"}">
+                    ${v.valid ? "valid" : "invalid"}
+                  </span>
+                  <br />
+                  <span class="small">${escapeHtml(v.reason)}</span>
+                </p>
+              `
+            }).join("")}
+          </div>
+        `
+      }
+
+      if (data.missing_layer) {
+        html += `
+          <div class="card warning">
+            <h3>Area to Clarify</h3>
+            <p><b>${escapeHtml(data.missing_layer)}</b></p>
+            <p>${escapeHtml(data.missing_reason)}</p>
+            <p><b>Next question:</b> ${escapeHtml(data.next_question)}</p>
+
+            <textarea id="repairInput" placeholder="Answer this question to continue..."></textarea>
+            <button class="primary" onclick="continueAnalysis()">Continue Analysis</button>
+          </div>
+        `
+      }
+
+      if (data.status === "decision_ready") {
+        html += `
+          <div class="card">
+            <h3>Recommendation</h3>
+            <p><b>${escapeHtml(data.recommendation)}</b></p>
+            <p><b>Topology:</b> ${escapeHtml(data.topology)}</p>
+
+            <div class="grid">
+              <div class="metric">
+                <div class="label">Alignment</div>
+                <div class="value">${data.alignment}</div>
+                <div class="small">${escapeHtml(data.alignment_label || scoreLabel(data.alignment))}</div>
+              </div>
+
+              <div class="metric">
+                <div class="label">Tension</div>
+                <div class="value">${data.tension}</div>
+                <div class="small">${escapeHtml(data.tension_label || scoreLabel(data.tension))}</div>
+              </div>
+
+              <div class="metric">
+                <div class="label">Convergence</div>
+                <div class="value">${data.convergence}</div>
+                <div class="small">${escapeHtml(data.convergence_label || scoreLabel(data.convergence))}</div>
+              </div>
+            </div>
+
+            ${
+              data.summary
+                ? `<p style="margin-top:16px;">${escapeHtml(data.summary)}</p>`
+                : ""
+            }
+          </div>
+        `
+      }
+
+      if (data.structural_conflict) {
+        html += `
+          <div class="card danger">
+            <h3>Structural Conflict Detected</h3>
+            <p><b>Conflict type:</b> ${escapeHtml(data.conflict_type)}</p>
+            <p>${escapeHtml(data.conflict_explanation)}</p>
+            ${
+              data.repair_question
+                ? `<p><b>Repair question:</b> ${escapeHtml(data.repair_question)}</p>`
+                : ""
+            }
+
+            ${
+              data.repair_question
+                ? `
+                  <textarea id="repairInput" placeholder="Answer this question to continue..."></textarea>
+                  <button class="primary" onclick="continueAnalysis()">Continue Analysis</button>
+                `
+                : ""
+            }
+          </div>
+        `
+      }
+
+      html += `
+        <details style="margin-top:20px;">
+          <summary>Raw JSON</summary>
+          <pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+        </details>
+      `
+
+      result.innerHTML = html
+    }
+
+    function continueAnalysis() {
+      const repairInput = document.getElementById("repairInput")
+      if (!repairInput || !repairInput.value.trim()) {
+        alert("Enter your clarification answer.")
+        return
+      }
+
+      analyze(repairInput.value.trim())
+    }
+  </script>
+</body>
+</html>

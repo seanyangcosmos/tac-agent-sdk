@@ -1,0 +1,36 @@
+{
+  "name": "@sycds/tac-agent",
+  "version": "0.1.0",
+  "description": "TAC Agent installer SDK",
+  "type": "module",
+  "main": "dist/installer.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/installer.ts --format esm --dts --minify",
+    "dev": "tsup src/index.ts src/installer.ts --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "tac",
+    "decision-engine",
+    "alignment",
+    "tension",
+    "convergence"
+  ],
+  "author": "Sean Yang",
+  "license": "MIT",
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@seanyangcosmos/tac-agent": "file:seanyangcosmos-tac-agent-0.1.0.tgz",
+    "openai": "^6.34.0"
+  }
+  "bin": {
+    "tac-agent": "dist/cli.js"
+  }
+}

@@ -1,0 +1,391 @@
+export interface TacLLM {
+  complete(prompt: string): Promise<string>
+}
+
+function safeParse(raw: string) {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+type DecisionState = {
+  intent: string
+  resources: string
+  risk_boundary: string
+  execution_horizon: string
+}
+
+type ParsedLayers = Partial<DecisionState>
+
+type LayerValidation = {
+  valid: boolean
+  reason: string
+}
+
+type ValidationResult = {
+  intent: LayerValidation
+  resources: LayerValidation
+  risk_boundary: LayerValidation
+  execution_horizon: LayerValidation
+}
+
+type RepairTarget = {
+  target_edge: string
+  verification_type: string
+  question_logic: string
+  suggested_question: string
+}
+
+type StructuralConflictResult = {
+  has_conflict: boolean
+  conflict_type: string
+  explanation: string
+  repair_target?: RepairTarget | null
+}
+
+function safeText(value: unknown): string {
+  return String(value || "").trim()
+}
+
+function clamp10(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value)
+  if (Number.isNaN(n)) return 0
+  return Math.max(0, Math.min(10, n))
+}
+
+function scoreLabel10(value: number): string {
+  if (value >= 8) return "Strong"
+  if (value >= 5) return "Moderate"
+  if (value >= 3) return "Limited"
+  return "Low"
+}
+
+function emptyDecisionState(): DecisionState {
+  return {
+    intent: "",
+    resources: "",
+    risk_boundary: "",
+    execution_horizon: ""
+  }
+}
+
+function mergeDecisionState(
+  current: DecisionState,
+  parsed: ParsedLayers
+): DecisionState {
+  return {
+    intent: parsed.intent || current.intent,
+    resources: parsed.resources || current.resources,
+    risk_boundary: parsed.risk_boundary || current.risk_boundary,
+    execution_horizon:
+      parsed.execution_horizon || current.execution_horizon
+  }
+}
+
+function calculateReadinessScore(validation: ValidationResult): number {
+  const validCount = Object.values(validation).filter(v => v.valid).length
+  return Math.round((validCount / 4) * 100)
+}
+
+function detectMissingLayer(
+  state: DecisionState,
+  validation: ValidationResult
+): keyof DecisionState | null {
+  if (!state.intent || !validation.intent.valid) return "intent"
+  if (!state.resources || !validation.resources.valid) return "resources"
+  if (!state.risk_boundary || !validation.risk_boundary.valid)
+    return "risk_boundary"
+  if (
+    !state.execution_horizon ||
+    !validation.execution_horizon.valid
+  )
+    return "execution_horizon"
+  return null
+}
+
+function nextQuestion(layer: keyof DecisionState | null): string {
+  if (!layer) return ""
+
+  const map = {
+    intent: "What decision are you actually trying to make?",
+    resources:
+      "What resources, budget, or constraints shape this decision?",
+    risk_boundary:
+      "What downside must this decision avoid?",
+    execution_horizon:
+      "What timing makes this decision meaningful?"
+  }
+
+  return map[layer]
+}
+
+async function inferTacStructure(
+  input: string,
+  llm: TacLLM
+) {
+  const prompt = `
+Split the user's decision into TAC layers.
+
+Return JSON:
+
+{
+"segments": string[],
+"intent": string,
+"resources": string,
+"risk_boundary": string,
+"execution_horizon": string
+}
+
+User input:
+${input}
+`
+  const raw = await llm.complete(prompt)
+  const parsed = safeParse(raw)
+
+  if (!parsed) {
+    return {
+      segments: [],
+      parsedLayers: {}
+    }
+  }
+
+  return {
+    segments: parsed.segments || [],
+    parsedLayers: {
+      intent: safeText(parsed.intent),
+      resources: safeText(parsed.resources),
+      risk_boundary: safeText(parsed.risk_boundary),
+      execution_horizon: safeText(parsed.execution_horizon)
+    }
+  }
+}
+
+async function validateTacLayers(
+  state: DecisionState,
+  llm: TacLLM
+): Promise<ValidationResult> {
+  const prompt = `
+Validate TAC structure.
+
+Return JSON:
+
+{
+"intent":{"valid":boolean,"reason":string},
+"resources":{"valid":boolean,"reason":string},
+"risk_boundary":{"valid":boolean,"reason":string},
+"execution_horizon":{"valid":boolean,"reason":string}
+}
+
+State:
+${JSON.stringify(state)}
+`
+
+  const raw = await llm.complete(prompt)
+  const parsed = safeParse(raw)
+
+  if (!parsed) {
+    return {
+      intent: { valid: false, reason: "LLM returned non-JSON output" },
+      resources: { valid: false, reason: "LLM returned non-JSON output" },
+      risk_boundary: { valid: false, reason: "LLM returned non-JSON output" },
+      execution_horizon: { valid: false, reason: "LLM returned non-JSON output" }
+    }
+  }
+
+  return parsed
+}
+async function detectStructuralConflict(
+  state: DecisionState,
+  llm: TacLLM
+): Promise<StructuralConflictResult> {
+  const prompt = `
+Detect structural conflict in TAC decision.
+
+Return JSON:
+
+{
+"has_conflict": boolean,
+"conflict_type": string,
+"explanation": string,
+"repair_target": {
+"target_edge": string,
+"verification_type": string,
+"question_logic": string,
+"suggested_question": string
+}
+}
+
+State:
+${JSON.stringify(state)}
+`
+
+  const raw = await llm.complete(prompt)
+  return safeParse(raw)
+}
+
+async function evaluateDecision(
+  state: DecisionState,
+  conflict: StructuralConflictResult,
+  llm: TacLLM
+) {
+  const prompt = `
+Evaluate TAC decision.
+
+Return JSON:
+
+{
+"alignment": number,
+"tension": number,
+"convergence": number,
+"summary": string
+}
+
+State:
+${JSON.stringify(state)}
+
+Conflict:
+${JSON.stringify(conflict)}
+`
+
+  const raw = await llm.complete(prompt)
+  const parsed = safeParse(raw)
+
+  return {
+    alignment: clamp10(parsed.alignment),
+    tension: clamp10(parsed.tension),
+    convergence: clamp10(parsed.convergence),
+    summary: safeText(parsed.summary)
+  }
+}
+
+function deriveRecommendation(
+  alignment: number,
+  tension: number,
+  convergence: number,
+  conflict: boolean
+) {
+  if (conflict && tension >= 7) return "Needs clarification"
+  if (alignment >= 8 && tension <= 4 && convergence >= 8)
+    return "Proceed"
+  if (alignment >= 7 && tension <= 6 && convergence >= 5)
+    return "Proceed with caution"
+  if (alignment <= 4) return "Do not proceed"
+  if (convergence <= 4) return "Wait"
+  return "Needs clarification"
+}
+
+function deriveTopology(
+  alignment: number,
+  tension: number,
+  convergence: number,
+  conflict: boolean
+) {
+  if (conflict) return "structural_tension"
+  if (alignment >= 8 && tension <= 4 && convergence >= 8)
+    return "stable_alignment"
+  if (alignment >= 7 && tension <= 6 && convergence >= 5)
+    return "actionable_with_risk"
+  if (alignment <= 4) return "structural_misalignment"
+  if (convergence <= 4) return "low_readiness"
+  return "uncertain_structure"
+}
+
+export async function tacAnalyze({
+  llm,
+  input,
+  decisionState = {}
+}: {
+  llm: TacLLM
+  input: string
+  decisionState?: Partial<DecisionState>
+}) {
+  const base = {
+    ...emptyDecisionState(),
+    ...decisionState
+  }
+
+  const inferred = await inferTacStructure(input, llm)
+
+  const merged = mergeDecisionState(
+    base,
+    inferred.parsedLayers
+  )
+
+  const validation = await validateTacLayers(
+    merged,
+    llm
+  )
+
+  const readiness_score =
+    calculateReadinessScore(validation)
+
+  const missing_layer = detectMissingLayer(
+    merged,
+    validation
+  )
+
+  if (missing_layer) {
+    return {
+      status: "needs_one_more_condition",
+      missing_layer,
+      next_question: nextQuestion(missing_layer),
+      readiness_score
+    }
+  }
+
+  const conflict = await detectStructuralConflict(
+    merged,
+    llm
+  )
+
+  const evaluated = await evaluateDecision(
+    merged,
+    conflict,
+    llm
+  )
+
+  const recommendation = deriveRecommendation(
+    evaluated.alignment,
+    evaluated.tension,
+    evaluated.convergence,
+    conflict.has_conflict
+  )
+
+  const topology = deriveTopology(
+    evaluated.alignment,
+    evaluated.tension,
+    evaluated.convergence,
+    conflict.has_conflict
+  )
+
+  return {
+    status: "decision_ready",
+    segments: inferred.segments,
+    decision_state: merged,
+    validation,
+    readiness_score,
+    structural_conflict: conflict.has_conflict,
+    conflict_type: conflict.conflict_type,
+    conflict_explanation: conflict.explanation,
+    repair_target: conflict.repair_target || null,
+    repair_question:
+      conflict.repair_target?.suggested_question || "",
+    alignment: evaluated.alignment,
+    alignment_label: scoreLabel10(
+      evaluated.alignment
+    ),
+    tension: evaluated.tension,
+    tension_label: scoreLabel10(
+      evaluated.tension
+    ),
+    convergence: evaluated.convergence,
+    convergence_label: scoreLabel10(
+      evaluated.convergence
+    ),
+    recommendation,
+    topology,
+    summary: evaluated.summary
+  }
+}

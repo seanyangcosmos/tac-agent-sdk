@@ -1,0 +1,38 @@
+{
+  "name": "@sycds/tac-agent",
+  "version": "0.1.0",
+  "description": "TAC Agent local runtime",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "public"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/installer.ts src/server.ts src/cli.ts --format esm --dts --minify",
+    "dev": "tsup src/index.ts src/server.ts src/cli.ts --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "tac",
+    "decision-engine",
+    "alignment",
+    "tension",
+    "convergence"
+  ],
+  "author": "Sean Yang",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "openai": "^6.34.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "tsup": "^8.5.1",
+    "typescript": "^5.4.0"
+  },
+  "bin": {
+    "tac-agent": "dist/cli.js"
+  }
+}
